@@ -10,7 +10,8 @@ const HOW = { utr: 'same UTR already recorded', reference: 'bill number in the p
 // Receives a payment receipt shared from GPay / a bank app (via the service worker),
 // reads it with GPT-4o, and pre-selects the bill it pays. The payer confirms with one tap.
 export default function ShareInbox() {
-  const { expenses, me, payeeById, attByExp, reload, toast } = useData();
+  const { expenses, me, payeeById, attByExp, reload, toast, funds = [] } = useData();
+  const [paidFrom, setPaidFrom] = useState(funds.find((f) => f.holder === me.id)?.id || '');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [pick, setPick] = useState(null);
@@ -76,7 +77,7 @@ export default function ShareInbox() {
       await uploadAttachment(e.id, file, 'receipt');
       if (e.status === 'approved') {
         const paid = x?.amount ?? Number(e.approved_amount);
-        await rpc('mark_paid', { p_id: e.id, p_mode: x?.mode || 'upi', p_ref: ref.trim() || null, p_amount: paid, p_paid_at: null });
+        await rpc('mark_paid', { p_id: e.id, p_mode: x?.mode || 'upi', p_ref: ref.trim() || null, p_amount: paid, p_paid_at: null, ...(funds.length ? { p_from: paidFrom || null } : {}) });
         notifyPayment(e.id);
       }
       await reload();
@@ -116,6 +117,14 @@ export default function ShareInbox() {
           <Field label="UTR / UPI transaction ID" hint={x?.utr ? 'Read from the receipt — check it matches.' : 'Copy it from the receipt if it isn’t filled in.'}>
             <input className="mono" value={ref} onChange={(ev) => setRef(ev.target.value.trim())} />
           </Field>
+          {funds.length > 0 && chosen?.status !== 'paid' && (
+            <Field label="Paid from">
+              <select value={paidFrom} onChange={(ev) => setPaidFrom(ev.target.value)}>
+                {funds.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                <option value="">My own money (counts as my contribution)</option>
+              </select>
+            </Field>
+          )}
           {amountDiffers && chosen.status === 'approved' && (
             <p className="note orange small">The receipt shows {money(x.amount)} but {chosen.serial} was approved for {money(effAmount(chosen))}. It will be recorded as {money(x.amount)} paid.</p>
           )}

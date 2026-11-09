@@ -8,7 +8,7 @@ import { Sheet, Chip, Field, FilePicker, PendingFiles, Attachments } from './ui'
 import ExpenseForm from './ExpenseForm';
 
 export default function ExpenseDetail({ id, onClose }) {
-  const { expenses, me, userById, payeeById, attByExp, reload, toast } = useData();
+  const { expenses, me, userById, payeeById, attByExp, reload, toast, funds = [] } = useData();
   const e = expenses.find((x) => x.id === id);
   const [log, setLog] = useState([]);
   const [editing, setEditing] = useState(false);
@@ -68,8 +68,10 @@ export default function ExpenseDetail({ id, onClose }) {
         {e.status === 'paid' && <>
           <div><dt>Paid</dt><dd>{money(e.paid_amount)} · {e.payment_mode?.toUpperCase()} · {fmtDateTime(e.paid_at)}</dd></div>
           <div><dt>UTR / Ref</dt><dd className="mono">{e.payment_ref || '—'}</dd></div>
+          {!me.hide_money_sources && <div><dt>Paid from</dt><dd>{e.paid_from ? (funds.find((f) => f.id === e.paid_from)?.name || 'Account') : `${userById[e.paid_by]?.full_name || 'Payer'}'s own money`}</dd></div>}
         </>}
       </dl>
+      {e.prepaid_fund && e.status !== 'paid' && <div className="note small">Already paid by <b>{userById[e.submitted_by]?.full_name}</b> from <b>{funds.find((f) => f.id === e.prepaid_fund)?.name}</b> — needs approval to be recorded.</div>}
       {e.approver_note && <div className={`note ${e.status === 'query' ? 'orange' : e.status === 'rejected' ? 'grey' : ''}`}><b>Approver:</b> {e.approver_note}</div>}
 
       {isApprover && ['submitted', 'query', 'approved'].includes(e.status) && <ApprovePanel e={e} />}
@@ -118,7 +120,8 @@ function describe(l) {
 }
 
 function ApprovePanel({ e }) {
-  const { users, categories, reload, toast, me } = useData();
+  const { users, categories, reload, toast, me, funds = [], userById } = useData();
+  const prepaid = !!e.prepaid_fund;
   const payers = users.filter((u) => u.active && u.roles.includes('payer'));
   const lastPayer = (() => { try { return localStorage.getItem('pof-last-payer'); } catch { return null; } })();
   const [open, setOpen] = useState(e.status !== 'approved');
@@ -134,6 +137,12 @@ function ApprovePanel({ e }) {
     setBusy(false);
   };
   const approve = () => {
+    if (prepaid) {
+      return run(async () => {
+        await rpc('approve_expense', { p_id: e.id, p_amount: Number(amount), p_payer: null, p_category: category || null, p_payee: null, p_note: note.trim() || null });
+        notifyPayment(e.id); // it's now paid: send the WhatsApp payment update
+      }, 'Approved and recorded as paid');
+    }
     if (!payer) return toast('Choose who will pay', 'err');
     try { localStorage.setItem('pof-last-payer', payer); } catch {}
     run(() => rpc('approve_expense', { p_id: e.id, p_amount: Number(amount), p_payer: payer, p_category: category || null, p_payee: null, p_note: note.trim() || null }),
@@ -148,16 +157,19 @@ function ApprovePanel({ e }) {
   return (
     <section className="panel approve">
       <h4>{e.status === 'approved' ? 'Update approval' : 'Approve'}</h4>
+      {prepaid && <p className="note small"><b>{userById[e.submitted_by]?.full_name}</b> has already paid this from <b>{funds.find((f) => f.id === e.prepaid_fund)?.name || 'money given to them'}</b>{e.payment_ref ? <> (ref <span className="mono">{e.payment_ref}</span>)</> : ''}. Approving records it as paid.</p>}
       <div className="grid2 tight">
         <Field label="Approved amount (₹)" hint={Number(amount) !== Number(e.amount) ? `Bejoy entered ${money(e.amount)}` : null}>
           <input type="number" step="0.01" min="0.01" inputMode="decimal" value={amount} onChange={(x) => setAmount(x.target.value)} className="amount-input" />
         </Field>
-        <Field label="Who pays?">
-          <select value={payer} onChange={(x) => setPayer(x.target.value)}>
-            <option value="">Select payer…</option>
-            {payers.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
-          </select>
-        </Field>
+        {!prepaid && (
+          <Field label="Who pays?">
+            <select value={payer} onChange={(x) => setPayer(x.target.value)}>
+              <option value="">Select payer…</option>
+              {payers.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+            </select>
+          </Field>
+        )}
       </div>
       <Field label="Category">
         <select value={category} onChange={(x) => setCategory(x.target.value)}>
@@ -168,7 +180,7 @@ function ApprovePanel({ e }) {
         <input value={note} onChange={(x) => setNote(x.target.value)} placeholder="Optional for approval" />
       </Field>
       <div className="row gap wrap">
-        <button className="btn primary" disabled={busy} onClick={approve}>✓ {e.status === 'approved' ? 'Save' : 'Approve'}</button>
+        <button className="btn primary" disabled={busy} onClick={approve}>✓ {e.status === 'approved' ? 'Save' : prepaid ? 'Approve (already paid)' : 'Approve'}</button>
         <button className="btn" disabled={busy} onClick={() => send('query')}>? Query</button>
         <button className="btn danger" disabled={busy} onClick={() => send('rejected')}>Reject</button>
       </div>
@@ -177,7 +189,9 @@ function ApprovePanel({ e }) {
 }
 
 function PayPanel({ e, payee }) {
-  const { reload, toast } = useData();
+  const { reload, toast, funds = [], me } = useData();
+  // default: the account this person holds (Sherine → disbursement account), otherwise their own money
+  const [paidFrom, setPaidFrom] = useState(funds.find((f) => f.holder === me.id)?.id || '');
   const amount = Number(e.approved_amount ?? e.amount);
   const note = `${e.serial} ${e.description}`.slice(0, 60);
   const link = payee?.upi_id ? upiLink({ vpa: payee.upi_id, name: payee.name, amount, note }) : null;
@@ -226,7 +240,7 @@ function PayPanel({ e, payee }) {
     try {
       // upload first, so a failed upload doesn't leave a "paid" entry without its receipt
       for (const f of files) await uploadAttachment(e.id, f, 'receipt');
-      await rpc('mark_paid', { p_id: e.id, p_mode: mode, p_ref: ref.trim() || null, p_amount: Number(paidAmt), p_paid_at: null });
+      await rpc('mark_paid', { p_id: e.id, p_mode: mode, p_ref: ref.trim() || null, p_amount: Number(paidAmt), p_paid_at: null, ...(funds.length ? { p_from: paidFrom || null } : {}) });
       notifyPayment(e.id);
       await reload(); toast('Payment recorded ✓');
     } catch (err) { toast(err.message, 'err'); }
@@ -265,6 +279,14 @@ function PayPanel({ e, payee }) {
           <input type="number" step="0.01" inputMode="decimal" value={paidAmt} onChange={(x) => setPaidAmt(x.target.value)} />
         </Field>
       </div>
+      {funds.length > 0 && (
+        <Field label="Paid from">
+          <select value={paidFrom} onChange={(x) => setPaidFrom(x.target.value)}>
+            {funds.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            <option value="">My own money (counts as my contribution)</option>
+          </select>
+        </Field>
+      )}
       <FilePicker label="receipt" onFiles={addReceipts} />
       <PendingFiles files={files} onRemove={(i) => { setFiles((x) => x.filter((_, j) => j !== i)); if (i === 0) setReading(null); }} />
       <ReceiptReadout reading={reading} />

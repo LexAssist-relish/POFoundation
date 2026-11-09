@@ -34,6 +34,16 @@ const db = {
   ],
   expenses: [],
   attachments: [],
+  funds: [
+    { id: 'f1', project_id: 'p1', name: 'Disbursement account (Sherine)', holder: 'u-sherine', is_default: true, sort: 1 },
+    { id: 'f2', project_id: 'p1', name: 'With Bejoy (given directly)', holder: 'u-bejoy', is_default: false, sort: 2 },
+  ],
+  contributions: [
+    { id: 'c1', project_id: 'p1', fund_id: 'f1', contributor: 'P.O. Mathew', amount: 200000, status: 'received', received_on: '2026-11-03', mode: 'bank' },
+    { id: 'c2', project_id: 'p1', fund_id: 'f1', contributor: 'Varughese Koshy', amount: 100000, status: 'received', received_on: '2026-11-05', mode: 'bank' },
+    { id: 'c3', project_id: 'p1', fund_id: 'f1', contributor: 'Christy Baby', amount: 50000, status: 'pledged', received_on: '2026-11-12' },
+    { id: 'c4', project_id: 'p1', fund_id: 'f2', contributor: 'Kiran Shanker', amount: 25000, status: 'received', received_on: '2026-11-06', mode: 'upi' },
+  ],
   activity: [],
 };
 let serial = 0;
@@ -145,3 +155,5 @@ export async function adminUsers(method, body) {
   if (method === 'DELETE') db.profiles.find((p) => p.id === body.id).active = false;
   emit(); return { ok: true, deactivated: method === 'DELETE' };
 }
+export async function notifyPayment() { return { ok: true, skipped: 'demo' }; }
+export async function readReceipt() { return { ok: true, skipped: 'demo' }; }

@@ -40,7 +40,7 @@ const UserRow = ({ u, me, onClick }) => (
     <span className="avatar">{u.full_name.split(' ').map((w) => w[0]).slice(0, 2).join('')}</span>
     <div className="ri-main">
       <div className="ri-title">{u.full_name}{u.id === me.id && <span className="muted small"> (you)</span>}</div>
-      <div className="ri-sub">@{u.username}{u.relation ? ` · ${u.relation}` : ''}{u.phone ? ` · ${fmtPhone(u.phone)}` : ''}{u.phone && u.notify === false ? ' · alerts off' : ''}</div>
+      <div className="ri-sub">@{u.username}{u.relation ? ` · ${u.relation}` : ''}{u.phone ? ` · ${fmtPhone(u.phone)}` : ''}{u.phone && u.notify === false ? ' · alerts off' : ''}{u.hide_money_sources ? ' · can’t see contributors' : ''}</div>
     </div>
     <div className="ri-side roles">{u.roles.map((r) => <span key={r} className={`chip role-${r}`}>{ROLE_LABELS[r]}</span>)}</div>
   </button>
@@ -51,7 +51,7 @@ function UserSheet({ u, onClose }) {
   const [v, setV] = useState({
     username: u?.username || '', full_name: u?.full_name || '', relation: u?.relation || '',
     phone: u?.phone ? '+' + u.phone : '', roles: u?.roles || ['viewer'], pin: '', active: u?.active ?? true,
-    notify: u?.notify ?? true,
+    notify: u?.notify ?? true, hide_money_sources: u?.hide_money_sources ?? false,
   });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
@@ -61,7 +61,7 @@ function UserSheet({ u, onClose }) {
     e.preventDefault(); setBusy(true);
     try {
       if (u) {
-        await adminUsers('PATCH', { id: u.id, full_name: v.full_name, relation: v.relation, phone: v.phone, roles: v.roles, active: v.active, notify: v.notify, ...(v.pin ? { pin: v.pin } : {}) });
+        await adminUsers('PATCH', { id: u.id, full_name: v.full_name, relation: v.relation, phone: v.phone, roles: v.roles, active: v.active, notify: v.notify, hide_money_sources: v.hide_money_sources, ...(v.pin ? { pin: v.pin } : {}) });
         toast(v.pin ? 'Saved — new PIN set' : 'Saved');
       } else {
         if (phoneLooksIncomplete(v.phone)) throw new Error('Mobile number needs its country code, e.g. +60 12 345 6789 for Malaysia');
@@ -119,6 +119,7 @@ function UserSheet({ u, onClose }) {
             ))}
           </div>
         </div>
+        <label className="check"><input type="checkbox" checked={!v.hide_money_sources} onChange={(e) => setV((x) => ({ ...x, hide_money_sources: !e.target.checked }))} /> Can see who contributed money</label>
         <label className="check"><input type="checkbox" checked={v.notify} onChange={(e) => setV((x) => ({ ...x, notify: e.target.checked }))} /> WhatsApp message when a payment is made</label>
         {u && <label className="check"><input type="checkbox" checked={v.active} onChange={(e) => setV((x) => ({ ...x, active: e.target.checked }))} /> Active (can sign in)</label>}
         {v.phone && v.username && <button type="button" className="btn wa small" onClick={share}>💬 Send login details on WhatsApp</button>}

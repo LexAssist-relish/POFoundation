@@ -13,7 +13,8 @@ function initialFilter() {
 }
 
 export default function Daybook() {
-  const { expenses, categories, users, userById, payeeById, attByExp, project } = useData();
+  const { expenses, categories, users, userById, payeeById, attByExp, project, me, funds = [] } = useData();
+  const showFrom = funds.length > 0 && !me.hide_money_sources;
   const [f, setF] = useState(initialFilter);
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
 
@@ -42,14 +43,15 @@ export default function Daybook() {
 
   const exportCSV = () => {
     const rows = [['Serial', 'Date', 'Payee', 'Payee UPI', 'Category', 'Description', 'Submitted amount', 'Approved amount',
-      'Paid amount', 'Status', 'Submitted by', 'Approved by', 'Payer', 'Paid by', 'Paid on', 'Mode', 'UTR / Ref', 'Bills', 'Receipts', 'Approver note']];
+      'Paid amount', 'Status', 'Submitted by', 'Approved by', 'Payer', 'Paid by', 'Paid on', 'Mode', 'UTR / Ref', 'Bills', 'Receipts', 'Approver note', ...(showFrom ? ['Paid from'] : [])]];
     list.forEach((e) => {
       const at = attByExp[e.id] || [];
       rows.push([e.serial, e.expense_date, payeeById[e.payee_id]?.name, payeeById[e.payee_id]?.upi_id, e.category, e.description,
         e.amount, e.approved_amount, e.paid_amount, STATUS[e.status]?.label, userById[e.submitted_by]?.full_name,
         userById[e.approved_by]?.full_name, userById[e.payer_id]?.full_name, userById[e.paid_by]?.full_name,
         e.paid_at ? fmtDateTime(e.paid_at) : '', e.payment_mode, e.payment_ref,
-        at.filter((a) => a.kind === 'bill').length, at.filter((a) => a.kind === 'receipt').length, e.approver_note]);
+        at.filter((a) => a.kind === 'bill').length, at.filter((a) => a.kind === 'receipt').length, e.approver_note,
+        ...(showFrom ? [e.status === 'paid' ? (e.paid_from ? funds.find((f) => f.id === e.paid_from)?.name : 'Own money') : ''] : [])]);
     });
     downloadCSV(`${project.code}-daybook-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };

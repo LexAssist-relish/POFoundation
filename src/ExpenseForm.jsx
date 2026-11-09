@@ -6,7 +6,13 @@ import { Field, FilePicker, PendingFiles, Sheet } from './ui';
 import { PayeeForm } from './Payees';
 
 export default function ExpenseForm({ initial, onDone, onCancel }) {
-  const { project, payees, categories, toast, reload, me } = useData();
+  const { project, payees, categories, toast, reload, me, funds = [] } = useData();
+  // accounts this person holds money in (e.g. Bejoy: "With Bejoy") — lets them enter bills they've already paid
+  const heldFunds = funds.filter((f) => f.holder === me.id);
+  const [prepaid, setPrepaid] = useState(false);
+  const [prepaidFund, setPrepaidFund] = useState(heldFunds[0]?.id || '');
+  const [prepaidRef, setPrepaidRef] = useState('');
+  const [receipts, setReceipts] = useState([]);
   const editing = !!initial;
   const [v, setV] = useState(() => ({
     expense_date: initial?.expense_date || todayISO(),
@@ -31,17 +37,21 @@ export default function ExpenseForm({ initial, onDone, onCancel }) {
       if (editing) {
         await rpc('edit_expense', { p_id: id, p_date: v.expense_date, p_payee: v.payee_id, p_category: v.category || null, p_description: v.description.trim(), p_amount: amount });
       } else {
+        const already = prepaid && prepaidFund;
         const { data, error } = await supabase.from('expenses').insert({
           project_id: project.id, expense_date: v.expense_date, payee_id: v.payee_id,
           category: v.category || null, description: v.description.trim(), amount,
+          ...(already ? { prepaid_fund: prepaidFund, payment_mode: 'upi', payment_ref: prepaidRef.trim() || null } : {}),
         }).select('id').single();
         if (error) throw new Error(error.message);
         id = data.id;
       }
       let failed = 0;
       for (const f of files) { try { await uploadAttachment(id, f, 'bill'); } catch { failed++; } }
+      for (const f of receipts) { try { await uploadAttachment(id, f, 'receipt'); } catch { failed++; } }
       await reload();
-      toast(failed ? `Saved, but ${failed} file(s) failed to upload — retry from the expense` : editing ? 'Updated' : 'Submitted for approval', failed ? 'err' : 'ok');
+      toast(failed ? `Saved, but ${failed} file(s) failed to upload — retry from the expense` : editing ? 'Updated'
+        : prepaid ? 'Sent for approval — it will be recorded as paid by you' : 'Submitted for approval', failed ? 'err' : 'ok');
       onDone?.(id);
     } catch (err) {
       toast(err.message, 'err');
@@ -84,6 +94,30 @@ export default function ExpenseForm({ initial, onDone, onCancel }) {
         <FilePicker onFiles={(fs) => setFiles((x) => [...x, ...fs])} />
         <PendingFiles files={files} onRemove={(i) => setFiles((x) => x.filter((_, j) => j !== i))} />
       </Field>
+
+      {!editing && heldFunds.length > 0 && (
+        <div className={'panel' + (prepaid ? ' pay' : '')}>
+          <label className="check" style={{ margin: 0 }}>
+            <input type="checkbox" checked={prepaid} onChange={(e) => setPrepaid(e.target.checked)} />
+            <span><b>I’ve already paid this</b> from money given to me</span>
+          </label>
+          {prepaid && <>
+            {heldFunds.length > 1 && (
+              <Field label="Paid from">
+                <select value={prepaidFund} onChange={(e) => setPrepaidFund(e.target.value)}>
+                  {heldFunds.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </Field>
+            )}
+            <p className="small muted" style={{ margin: '8px 0' }}>It still goes for approval; once approved it’s recorded as paid from <b>{funds.find((f) => f.id === prepaidFund)?.name}</b>.</p>
+            <Field label="UTR / reference (optional)"><input className="mono" value={prepaidRef} onChange={(e) => setPrepaidRef(e.target.value.trim())} /></Field>
+            <Field label="Payment receipt (optional)">
+              <FilePicker label="receipt" onFiles={(fs) => setReceipts((x) => [...x, ...fs])} />
+              <PendingFiles files={receipts} onRemove={(i) => setReceipts((x) => x.filter((_, j) => j !== i))} />
+            </Field>
+          </>}
+        </div>
+      )}
 
       {!onCancel && <button className="btn primary block" disabled={busy}>{busy ? 'Saving…' : 'Submit for approval'}</button>}
     </form>

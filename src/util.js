@@ -40,7 +40,7 @@ export function upiLink({ vpa, name, amount, note }) {
   return 'upi://pay?' + p.toString().replace(/\+/g, '%20');
 }
 
-// Phone numbers are stored with country code, digits only.
+// Phone numbers are stored with country code, digits only: 919446051944, 60123456789.
 // A bare 10-digit number starting 6-9 is treated as Indian. Anything else must include its country code.
 export function normalizePhone(raw) {
   let p = String(raw || '').trim();
@@ -118,3 +118,40 @@ export function downloadCSV(filename, rows) {
   a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+
+// ---------- Money in / out ----------
+// Per account: received, pledged (not yet in), paid out, balance.
+// Plus "own money": payments made by someone from their own pocket (counts as their contribution).
+export function moneySummary({ funds = [], contributions = [], expenses = [], userById = {} }) {
+  const paid = expenses.filter((e) => e.status === 'paid');
+  const amt = (e) => Number(e.paid_amount ?? e.approved_amount ?? e.amount ?? 0);
+  const perFund = funds.map((f) => {
+    const cin = contributions.filter((c) => c.fund_id === f.id);
+    const received = cin.filter((c) => c.status === 'received').reduce((t, c) => t + Number(c.amount), 0);
+    const pledged = cin.filter((c) => c.status === 'pledged').reduce((t, c) => t + Number(c.amount), 0);
+    const out = paid.filter((e) => e.paid_from === f.id).reduce((t, e) => t + amt(e), 0);
+    return { fund: f, received, pledged, out, balance: received - out };
+  });
+  const ownPaid = paid.filter((e) => !e.paid_from);
+  const ownTotal = ownPaid.reduce((t, e) => t + amt(e), 0);
+
+  // Contributors: money given into an account + bills paid from own pocket
+  const people = new Map();
+  const add = (name, key, v) => {
+    const k = name.trim().toLowerCase();
+    const p = people.get(k) || { name: name.trim(), received: 0, pledged: 0, direct: 0 };
+    p[key] += v; people.set(k, p);
+  };
+  contributions.forEach((c) => add(c.contributor_id && userById[c.contributor_id] ? userById[c.contributor_id].full_name : c.contributor,
+    c.status === 'received' ? 'received' : 'pledged', Number(c.amount)));
+  ownPaid.forEach((e) => add(userById[e.paid_by]?.full_name || 'Unknown', 'direct', amt(e)));
+  const contributors = [...people.values()].map((p) => ({ ...p, total: p.received + p.direct }))
+    .sort((a, b) => b.total - a.total || b.pledged - a.pledged);
+
+  const totalIn = perFund.reduce((t, f) => t + f.received, 0) + ownTotal;
+  const totalOut = paid.reduce((t, e) => t + amt(e), 0);
+  const totalPledged = perFund.reduce((t, f) => t + f.pledged, 0);
+  return { perFund, ownTotal, contributors, totalIn, totalOut, totalPledged };
+}
+
+export const fundName = (funds, id) => (id ? funds.find((f) => f.id === id)?.name || 'Account' : 'Own money');

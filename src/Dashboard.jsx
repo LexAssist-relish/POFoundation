@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useData, go } from './App';
-import { money, has, effAmount, fmtDate } from './util';
+import { money, has, effAmount, fmtDate, moneySummary } from './util';
 import { Chip, Empty } from './ui';
 
 export const openDaybook = (filter) => {
@@ -9,7 +9,9 @@ export const openDaybook = (filter) => {
 };
 
 export default function Dashboard() {
-  const { me, project, expenses, categories, users, userById, payeeById } = useData();
+  const { me, project, expenses, categories, users, userById, payeeById, funds = [], contributions = [] } = useData();
+  const showMoney = funds.length > 0 && !me.hide_money_sources;
+  const ms = useMemo(() => moneySummary({ funds, contributions, expenses, userById }), [funds, contributions, expenses, userById]);
 
   const s = useMemo(() => {
     const live = expenses.filter((e) => e.status !== 'rejected');
@@ -85,6 +87,26 @@ export default function Dashboard() {
       )}
 
       <div className="grid2">
+        {showMoney ? (
+        <section className="card">
+          <h2>Money in &amp; out</h2>
+          <table className="mini">
+            <thead><tr><th>Account</th><th className="r">In</th><th className="r">Out</th><th className="r">Balance</th></tr></thead>
+            <tbody>
+              {ms.perFund.map(({ fund, received, out, balance }) => (
+                <tr key={fund.id} className="click" onClick={() => { location.hash = '#/money'; }}>
+                  <td>{fund.name}</td><td className="r">{money(received)}</td><td className="r">{money(out)}</td>
+                  <td className={'r' + (balance < 0 ? ' neg' : '')}><b>{money(balance)}</b></td>
+                </tr>
+              ))}
+              {ms.ownTotal > 0 && <tr><td>Paid from own pocket</td><td className="r">{money(ms.ownTotal)}</td><td className="r">{money(ms.ownTotal)}</td><td className="r">—</td></tr>}
+              <tr className="total"><td>Total</td><td className="r">{money(ms.totalIn)}</td><td className="r">{money(ms.totalOut)}</td>
+                <td className={'r' + (ms.totalIn - ms.totalOut < 0 ? ' neg' : '')}>{money(ms.totalIn - ms.totalOut)}</td></tr>
+            </tbody>
+          </table>
+          {ms.totalPledged > 0 && <p className="small muted" style={{ marginTop: 8 }}>+ {money(ms.totalPledged)} promised, not yet received</p>}
+        </section>
+        ) : !me.hide_money_sources && (
         <section className="card">
           <h2>Who has paid</h2>
           {s.payers.length === 0 ? <p className="muted small">No payers onboarded yet.</p> : (
@@ -103,6 +125,7 @@ export default function Dashboard() {
             </table>
           )}
         </section>
+        )}
 
         <section className="card">
           <h2>By category</h2>

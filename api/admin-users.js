@@ -16,7 +16,7 @@ function clean(body) {
   if (body.full_name !== undefined) out.full_name = String(body.full_name).trim();
   if (body.relation !== undefined) out.relation = String(body.relation || '').trim() || null;
   if (body.phone !== undefined) {
-    // Store the country code and digits only.
+    // stored with country code, digits only (919446051944, 60123456789)
     let raw = String(body.phone || '').trim();
     const intl = raw.startsWith('+') || raw.startsWith('00');
     let p = raw.replace(/\D/g, '');
@@ -30,6 +30,7 @@ function clean(body) {
   }
   if (body.active !== undefined) out.active = !!body.active;
   if (body.notify !== undefined) out.notify = !!body.notify;
+  if (body.hide_money_sources !== undefined) out.hide_money_sources = !!body.hide_money_sources;
   return out;
 }
 

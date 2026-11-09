@@ -9,6 +9,7 @@ import ExpenseDetail from './ExpenseDetail';
 import Payees from './Payees';
 import Users from './Users';
 import More from './More';
+import MoneyIn from './MoneyIn';
 import ShareInbox from './ShareInbox';
 
 const DataCtx = createContext(null);
@@ -93,7 +94,7 @@ function Shell({ userId }) {
   const [state, setState] = useState({ loading: true });
 
   const load = useCallback(async () => {
-    const [me, proj, users, payees, cats, exps, atts] = await Promise.all([
+    const [me, proj, users, payees, cats, exps, atts, fundsR, contribR] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
       supabase.from('projects').select('*').eq('code', 'bejoy-marriage').maybeSingle(),
       supabase.from('profiles').select('*').order('full_name'),
@@ -101,6 +102,8 @@ function Shell({ userId }) {
       supabase.from('categories').select('*').order('sort'),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('attachments').select('id, expense_id, kind, path, file_name, mime, uploaded_by, created_at').order('created_at'),
+      supabase.from('funds').select('*').order('sort'),
+      supabase.from('contributions').select('*').order('received_on', { ascending: false, nullsFirst: true }).order('created_at', { ascending: false }),
     ]);
     const err = [me, proj, users, payees, cats, exps, atts].find((r) => r.error)?.error;
     if (err) { setState((s) => ({ ...s, loading: false, error: err.message })); return; }
@@ -111,6 +114,9 @@ function Shell({ userId }) {
       categories: (cats.data || []).filter((c) => !proj.data || c.project_id === proj.data.id),
       expenses: (exps.data || []).filter((e) => !proj.data || e.project_id === proj.data.id),
       attByExp,
+      // funds/contributions exist once 004_contributions.sql has run; until then the app works without them
+      funds: fundsR.error ? [] : (fundsR.data || []).filter((f) => !proj.data || f.project_id === proj.data.id),
+      contributions: contribR.error ? [] : (contribR.data || []).filter((c) => !proj.data || c.project_id === proj.data.id),
     });
   }, [userId]);
 
@@ -124,6 +130,7 @@ function Shell({ userId }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, bump)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments' }, bump)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payees' }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contributions' }, bump)
       .subscribe();
     const vis = () => document.visibilityState === 'visible' && bump();
     document.addEventListener('visibilitychange', vis);
@@ -191,6 +198,7 @@ function Shell({ userId }) {
     ['home', '⌂', 'Home', true],
     ['daybook', '☰', 'Daybook', true],
     ['new', '+', 'Add', canInput],
+    ['money', '₹', 'Money in', state.funds.length > 0],
     ['payees', '◉', 'Payees', canPayees],
     ['users', '👥', 'Users', isAdmin],
     ['more', '⋯', 'More', true],
@@ -226,6 +234,7 @@ function Shell({ userId }) {
           {tab === 'home' && <Dashboard />}
           {tab === 'daybook' && <Daybook />}
           {tab === 'new' && canInput && <ExpenseForm onDone={(id) => go('#/e/' + id)} />}
+          {tab === 'money' && <MoneyIn />}
           {tab === 'payees' && canPayees && <Payees />}
           {tab === 'users' && isAdmin && <Users />}
           {tab === 'more' && <More />}
