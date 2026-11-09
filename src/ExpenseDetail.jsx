@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { useData } from './App';
-import { supabase, rpc, BUCKET } from './supabase';
+import { supabase, rpc, BUCKET, notifyPayment, readReceipt } from './supabase';
+import ReceiptReadout from './ReceiptReadout';
 import { money, fmtDate, fmtDateTime, has, upiLink, waLink, appLink, uploadAttachment, effAmount } from './util';
 import { Sheet, Chip, Field, FilePicker, PendingFiles, Attachments } from './ui';
 import ExpenseForm from './ExpenseForm';
@@ -186,6 +187,31 @@ function PayPanel({ e, payee }) {
   const [paidAmt, setPaidAmt] = useState(amount);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState(null);
+  const { expenses } = useData();
+
+  // Read the first receipt added with GPT-4o and fill in the UTR, amount and mode
+  const addReceipts = async (fs) => {
+    const firstNew = files.length === 0 ? fs[0] : null;
+    setFiles((x) => [...x, ...fs]);
+    if (!firstNew) return;
+    setReading({ loading: true });
+    const r = await readReceipt(firstNew);
+    const warnings = [...(r.warnings || [])].filter((w) => !/bills are for this amount|No bill waiting/.test(w));
+    if (r.match?.id && r.match.id !== e.id) {
+      const other = expenses.find((x) => x.id === r.match.id);
+      if (other) warnings.unshift(`This receipt looks like it's for ${other.serial}, not ${e.serial}.`);
+    }
+    if (r.extracted?.amount != null && Math.abs(r.extracted.amount - amount) >= 1)
+      warnings.push(`Receipt shows ${money(r.extracted.amount)}; ${money(amount)} was approved.`);
+    setReading({ ...r, warnings });
+    const x = r.extracted;
+    if (x) {
+      if (x.utr) setRef((cur) => cur || x.utr);
+      if (x.amount != null) setPaidAmt(x.amount);
+      if (x.mode) setMode(x.mode);
+    }
+  };
 
   useEffect(() => {
     if (link) QRCode.toDataURL(link, { margin: 1, width: 560, color: { dark: '#1f4f4c' } }).then(setQr);
@@ -201,6 +227,7 @@ function PayPanel({ e, payee }) {
       // upload first, so a failed upload doesn't leave a "paid" entry without its receipt
       for (const f of files) await uploadAttachment(e.id, f, 'receipt');
       await rpc('mark_paid', { p_id: e.id, p_mode: mode, p_ref: ref.trim() || null, p_amount: Number(paidAmt), p_paid_at: null });
+      notifyPayment(e.id);
       await reload(); toast('Payment recorded ✓');
     } catch (err) { toast(err.message, 'err'); }
     setBusy(false);
@@ -238,9 +265,12 @@ function PayPanel({ e, payee }) {
           <input type="number" step="0.01" inputMode="decimal" value={paidAmt} onChange={(x) => setPaidAmt(x.target.value)} />
         </Field>
       </div>
-      <FilePicker label="receipt" onFiles={(fs) => setFiles((x) => [...x, ...fs])} />
-      <PendingFiles files={files} onRemove={(i) => setFiles((x) => x.filter((_, j) => j !== i))} />
-      <button className="btn primary block" disabled={busy} onClick={record} style={{ marginTop: 10 }}>{busy ? 'Saving…' : 'Mark as paid'}</button>
+      <FilePicker label="receipt" onFiles={addReceipts} />
+      <PendingFiles files={files} onRemove={(i) => { setFiles((x) => x.filter((_, j) => j !== i)); if (i === 0) setReading(null); }} />
+      <ReceiptReadout reading={reading} />
+      <button className="btn primary block" disabled={busy || reading?.loading || reading?.extracted?.status === 'failed'} onClick={record} style={{ marginTop: 10 }}>
+        {busy ? 'Saving…' : reading?.loading ? 'Reading receipt…' : reading?.extracted?.status === 'failed' ? 'Receipt shows a failed payment' : 'Mark as paid'}
+      </button>
     </section>
   );
 }

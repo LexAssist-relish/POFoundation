@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useData } from './App';
 import { supabase } from './supabase';
-import { has, money, ROLE_LABELS } from './util';
+import { has, money, ROLE_LABELS, fmtDateTime, fmtPhone } from './util';
 import { Field } from './ui';
 
 export default function More() {
@@ -16,6 +16,7 @@ export default function More() {
       </section>
       {has(me, 'admin') && <Budgets />}
       {has(me, 'admin') && <ProjectSettings />}
+      {has(me, 'admin') && <WhatsAppLog />}
       <section className="card">
         <h2>Install on your phone</h2>
         <p className="small">Android: open in Chrome → ⋮ menu → <b>Add to Home screen</b>. Once installed, <b>P O Foundation</b> appears in GPay’s Share menu so receipts attach in one tap.<br />iPhone: Safari → Share → <b>Add to Home Screen</b> (receipt sharing isn’t supported on iPhone — use “Upload file” instead).</p>
@@ -117,6 +118,39 @@ function ProjectSettings() {
         </div>
         <button className="btn">Save</button>
       </form>
+    </section>
+  );
+}
+
+const EVENT_LABEL = { submitted: 'Approval request', approved: 'Payment request', query: 'Query', rejected: 'Rejected', paid: 'Payment made' };
+
+function WhatsAppLog() {
+  const { userById, expenses } = useData();
+  const [rows, setRows] = useState(null);
+  const load = () => supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(25)
+    .then(({ data, error }) => setRows(error ? { error: error.message } : data || []));
+  useEffect(() => { load(); }, []);
+  const serial = (id) => expenses.find((e) => e.id === id)?.serial || '';
+  return (
+    <section className="card">
+      <div className="page-head"><h2>WhatsApp alerts</h2><button className="btn ghost small" onClick={load}>Refresh</button></div>
+      {rows === null ? <p className="muted small">Loading…</p>
+        : rows.error ? <p className="muted small">Not set up yet — run supabase/002_whatsapp.sql. ({rows.error})</p>
+        : rows.length === 0 ? <p className="muted small">No payment messages sent yet. They start once MSG91 is connected in Vercel and a payment is made.</p>
+        : (
+          <div className="wa-log">
+            {rows.map((r) => (
+              <div key={r.id} className="wa-row">
+                <span className={`chip ${r.status === 'sent' ? 'green' : r.status === 'failed' ? 'orange' : 'grey'}`}>{r.status}</span>
+                <div className="ri-main">
+                  <div className="small"><b>{userById[r.recipient]?.full_name || fmtPhone(r.phone)}</b> · {EVENT_LABEL[r.event] || r.event} · {serial(r.expense_id)}</div>
+                  {r.error && <div className="small neg">{r.error}</div>}
+                </div>
+                <span className="small muted">{fmtDateTime(r.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
     </section>
   );
 }

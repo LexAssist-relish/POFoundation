@@ -40,11 +40,24 @@ export function upiLink({ vpa, name, amount, note }) {
   return 'upi://pay?' + p.toString().replace(/\+/g, '%20');
 }
 
-export const waLink = (phone, text) => {
-  let p = (phone || '').replace(/\D/g, '');
-  if (p.length === 10) p = '91' + p;
-  return `https://wa.me/${p}?text=${encodeURIComponent(text)}`;
+// Phone numbers are stored with country code, digits only.
+// A bare 10-digit number starting 6-9 is treated as Indian. Anything else must include its country code.
+export function normalizePhone(raw) {
+  let p = String(raw || '').trim();
+  const intl = p.startsWith('+') || p.startsWith('00');
+  p = p.replace(/\D/g, '');
+  if (p.startsWith('00')) p = p.slice(2);
+  if (!intl && p.length === 10 && /^[6-9]/.test(p)) p = '91' + p;
+  return p;
+}
+export const phoneLooksIncomplete = (raw) => {
+  const p = normalizePhone(raw);
+  return !!p && (p.startsWith('0') || p.length < 11);
 };
+export const fmtPhone = (p) => (p ? '+' + p : '');
+
+export const waLink = (phone, text) =>
+  `https://wa.me/${normalizePhone(phone)}?text=${encodeURIComponent(text)}`;
 
 export const appLink = (id) => `${location.origin}/#/e/${id}`;
 
@@ -64,6 +77,13 @@ export async function compressImage(file, max = 1800, quality = 0.78) {
     return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
   } catch { return file; }
 }
+
+export const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(',')[1] || '');
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(file);
+});
 
 export async function uploadAttachment(expenseId, file, kind) {
   const f = await compressImage(file);

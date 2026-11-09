@@ -15,12 +15,21 @@ function clean(body) {
   if (body.username !== undefined) out.username = String(body.username).trim().toLowerCase();
   if (body.full_name !== undefined) out.full_name = String(body.full_name).trim();
   if (body.relation !== undefined) out.relation = String(body.relation || '').trim() || null;
-  if (body.phone !== undefined) out.phone = String(body.phone || '').replace(/[^\d]/g, '') || null;
+  if (body.phone !== undefined) {
+    // Store the country code and digits only.
+    let raw = String(body.phone || '').trim();
+    const intl = raw.startsWith('+') || raw.startsWith('00');
+    let p = raw.replace(/\D/g, '');
+    if (p.startsWith('00')) p = p.slice(2);
+    if (!intl && p.length === 10 && /^[6-9]/.test(p)) p = '91' + p;
+    out.phone = p || null;
+  }
   if (body.roles !== undefined) {
     const r = (Array.isArray(body.roles) ? body.roles : []).filter((x) => ROLES.includes(x));
     out.roles = r.length ? r : ['viewer'];
   }
   if (body.active !== undefined) out.active = !!body.active;
+  if (body.notify !== undefined) out.notify = !!body.notify;
   return out;
 }
 
@@ -44,6 +53,7 @@ export default async function handler(req, res) {
       if (!/^[a-z0-9._-]{2,32}$/.test(p.username || '')) return res.status(400).json({ error: 'Username: 2–32 letters/numbers, no spaces' });
       if (!p.full_name) return res.status(400).json({ error: 'Full name required' });
       if (!/^\d{6}$/.test(pin)) return res.status(400).json({ error: 'PIN must be 6 digits' });
+      if (p.phone && (p.phone.startsWith('0') || p.phone.length < 11)) return res.status(400).json({ error: 'Mobile number needs its country code, e.g. +60 12 345 6789 for Malaysia' });
       const { data: created, error } = await sb.auth.admin.createUser({
         email: `${p.username}@${DOMAIN}`, password: pin, email_confirm: true,
         user_metadata: { full_name: p.full_name },

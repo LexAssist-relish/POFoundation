@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useData } from './App';
 import { adminUsers } from './supabase';
-import { ROLE_LABELS } from './util';
+import { ROLE_LABELS, waLink, normalizePhone, phoneLooksIncomplete, fmtPhone } from './util';
 import { Field, Sheet } from './ui';
 
 const ROLE_HELP = {
@@ -40,7 +40,7 @@ const UserRow = ({ u, me, onClick }) => (
     <span className="avatar">{u.full_name.split(' ').map((w) => w[0]).slice(0, 2).join('')}</span>
     <div className="ri-main">
       <div className="ri-title">{u.full_name}{u.id === me.id && <span className="muted small"> (you)</span>}</div>
-      <div className="ri-sub">@{u.username}{u.relation ? ` · ${u.relation}` : ''}{u.phone ? ` · ${u.phone}` : ''}</div>
+      <div className="ri-sub">@{u.username}{u.relation ? ` · ${u.relation}` : ''}{u.phone ? ` · ${fmtPhone(u.phone)}` : ''}{u.phone && u.notify === false ? ' · alerts off' : ''}</div>
     </div>
     <div className="ri-side roles">{u.roles.map((r) => <span key={r} className={`chip role-${r}`}>{ROLE_LABELS[r]}</span>)}</div>
   </button>
@@ -50,7 +50,8 @@ function UserSheet({ u, onClose }) {
   const { reload, toast, me } = useData();
   const [v, setV] = useState({
     username: u?.username || '', full_name: u?.full_name || '', relation: u?.relation || '',
-    phone: u?.phone || '', roles: u?.roles || ['viewer'], pin: '', active: u?.active ?? true,
+    phone: u?.phone ? '+' + u.phone : '', roles: u?.roles || ['viewer'], pin: '', active: u?.active ?? true,
+    notify: u?.notify ?? true,
   });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
@@ -60,9 +61,10 @@ function UserSheet({ u, onClose }) {
     e.preventDefault(); setBusy(true);
     try {
       if (u) {
-        await adminUsers('PATCH', { id: u.id, full_name: v.full_name, relation: v.relation, phone: v.phone, roles: v.roles, active: v.active, ...(v.pin ? { pin: v.pin } : {}) });
+        await adminUsers('PATCH', { id: u.id, full_name: v.full_name, relation: v.relation, phone: v.phone, roles: v.roles, active: v.active, notify: v.notify, ...(v.pin ? { pin: v.pin } : {}) });
         toast(v.pin ? 'Saved — new PIN set' : 'Saved');
       } else {
+        if (phoneLooksIncomplete(v.phone)) throw new Error('Mobile number needs its country code, e.g. +60 12 345 6789 for Malaysia');
         await adminUsers('POST', v);
         toast(`${v.full_name} onboarded — login @${v.username.toLowerCase()}`);
       }
@@ -77,8 +79,7 @@ function UserSheet({ u, onClose }) {
   };
   const share = () => {
     const text = `P O Foundation – Bejoy John Marriage expenses app\n${location.origin}\nUsername: ${v.username.toLowerCase()}\nPIN: ${v.pin || '(as told to you)'}\nOn Android open the link in Chrome → ⋮ → Add to Home screen.`;
-    const p = v.phone.replace(/\D/g, ''); const num = p.length === 10 ? '91' + p : p;
-    window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank');
+    window.open(waLink(v.phone, text), '_blank');
   };
 
   return (
@@ -97,7 +98,9 @@ function UserSheet({ u, onClose }) {
           <Field label="Username (login)" hint={u ? 'Usernames cannot be changed' : 'lowercase, no spaces'}>
             <input required disabled={!!u} autoCapitalize="none" value={v.username} onChange={(e) => setV((x) => ({ ...x, username: e.target.value.toLowerCase().replace(/\s/g, '') }))} />
           </Field>
-          <Field label="WhatsApp number"><input inputMode="tel" value={v.phone} onChange={set('phone')} placeholder="10-digit mobile" /></Field>
+          <Field label="WhatsApp number" hint={phoneLooksIncomplete(v.phone) ? 'Add the country code, e.g. +60 for Malaysia' : v.phone ? `Saved as ${fmtPhone(normalizePhone(v.phone))}` : 'India: 10 digits. Abroad: +country code, e.g. +60 12 345 6789'}>
+            <input inputMode="tel" value={v.phone} onChange={set('phone')} placeholder="9446051944 or +60 12 345 6789" />
+          </Field>
         </div>
         <Field label={u ? 'Reset PIN (leave blank to keep)' : '6-digit PIN'}>
           <div className="row gap">
@@ -116,6 +119,7 @@ function UserSheet({ u, onClose }) {
             ))}
           </div>
         </div>
+        <label className="check"><input type="checkbox" checked={v.notify} onChange={(e) => setV((x) => ({ ...x, notify: e.target.checked }))} /> WhatsApp message when a payment is made</label>
         {u && <label className="check"><input type="checkbox" checked={v.active} onChange={(e) => setV((x) => ({ ...x, active: e.target.checked }))} /> Active (can sign in)</label>}
         {v.phone && v.username && <button type="button" className="btn wa small" onClick={share}>💬 Send login details on WhatsApp</button>}
       </form>

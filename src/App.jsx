@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, LOGIN_DOMAIN } from './supabase';
-import { has } from './util';
+import { has, money, effAmount } from './util';
 import { useToast } from './ui';
 import Dashboard from './Dashboard';
 import Daybook from './Daybook';
@@ -69,7 +69,10 @@ function Login() {
   return (
     <div className="login">
       <form className="login-card" onSubmit={submit}>
-        <Brand big />
+        <div className="login-logo">
+          <img src="/logo-full.png" alt="P O Foundation" />
+          <div className="brand-sub">Bejoy John - Marriage</div>
+        </div>
         <label className="field"><span className="field-label">Username</span>
           <input autoCapitalize="none" autoComplete="username" value={username}
             onChange={(e) => setUsername(e.target.value)} placeholder="e.g. motty" required /></label>
@@ -131,6 +134,38 @@ function Shell({ userId }) {
   const payeeById = useMemo(() => Object.fromEntries((state.payees || []).map((p) => [p.id, p])), [state.payees]);
   const ctx = useMemo(() => ({ ...state, userById, payeeById, reload: load, toast }), [state, userById, payeeById, load, toast]);
 
+  // ---- In-app alerts: when someone else's action needs me (or a payment is made), show a card ----
+  const [alerts, setAlerts] = useState([]);
+  const prevStatus = useRef(null);
+  useEffect(() => {
+    const { expenses, me } = state;
+    if (!expenses || !me) return;
+    const now = Object.fromEntries(expenses.map((e) => [e.id, e.status]));
+    const before = prevStatus.current;
+    prevStatus.current = now;
+    if (!before) return; // first load: nothing is "new"
+    const fresh = [];
+    for (const e of expenses) {
+      if (before[e.id] === e.status) continue;
+      const who = (id) => userById[id]?.full_name?.split(' ')[0] || 'Someone';
+      const what = `${e.serial} · ${money(effAmount(e))} · ${payeeById[e.payee_id]?.name || e.description}`;
+      if (e.status === 'submitted' && me.roles.includes('approver') && e.submitted_by !== me.id)
+        fresh.push({ id: e.id + e.status, eid: e.id, tone: 'amber', title: 'New bill to approve', text: `${what} — from ${who(e.submitted_by)}` });
+      else if (e.status === 'approved' && e.payer_id === me.id && e.approved_by !== me.id)
+        fresh.push({ id: e.id + e.status, eid: e.id, tone: 'blue', title: 'Please make this payment', text: `${what} — approved by ${who(e.approved_by)}` });
+      else if (e.status === 'query' && e.submitted_by === me.id)
+        fresh.push({ id: e.id + e.status, eid: e.id, tone: 'orange', title: 'Question on your bill', text: `${e.serial}: ${e.approver_note || ''}` });
+      else if (e.status === 'rejected' && e.submitted_by === me.id)
+        fresh.push({ id: e.id + e.status, eid: e.id, tone: 'grey', title: 'Bill rejected', text: `${e.serial}: ${e.approver_note || ''}` });
+      else if (e.status === 'paid' && e.paid_by !== me.id)
+        fresh.push({ id: e.id + e.status, eid: e.id, tone: 'green', title: 'Payment made', text: `${what} — paid by ${who(e.paid_by)}` });
+    }
+    if (fresh.length) {
+      setAlerts((a) => [...fresh, ...a.filter((x) => !fresh.some((f) => f.id === x.id))].slice(0, 5));
+      try { navigator.vibrate?.(80); } catch {}
+    }
+  }, [state.expenses]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (state.loading) return <Splash />;
   if (state.error) return <div className="splash"><p className="error">{state.error}</p><button className="btn" onClick={load}>Retry</button></div>;
   if (!state.me || !state.me.active) {
@@ -161,6 +196,11 @@ function Shell({ userId }) {
     ['more', '⋯', 'More', true],
   ].filter((n) => n[3]);
 
+  const myActions = state.expenses.filter((e) =>
+    (e.status === 'submitted' && has(me, 'approver')) ||
+    (e.status === 'approved' && e.payer_id === me.id) ||
+    (e.status === 'query' && e.submitted_by === me.id)).length;
+
   const closeDetail = () => (history.length > 1 && route === 'e' ? history.back() : go('#/' + tab));
 
   return (
@@ -177,7 +217,7 @@ function Shell({ userId }) {
         <nav className="sidenav">
           {navItems.map(([k, icon, label]) => (
             <a key={k} href={'#/' + k} className={(tab === k ? 'active ' : '') + (k === 'new' ? 'nav-add' : '')}>
-              <span className="nav-icon">{icon}</span><span>{label}</span>
+              <span className="nav-icon">{icon}{k === 'home' && myActions > 0 && <span className="badge">{myActions}</span>}</span><span>{label}</span>
             </a>
           ))}
         </nav>
@@ -192,6 +232,18 @@ function Shell({ userId }) {
           <footer className="foot muted small">P O Foundation · Pandampurath Oommen family</footer>
         </main>
 
+        {alerts.length > 0 && (
+          <div className="alerts" role="status">
+            {alerts.map((a) => (
+              <div key={a.id} className={`alert ${a.tone}`}>
+                <a href={'#/e/' + a.eid} onClick={() => setAlerts((x) => x.filter((y) => y.id !== a.id))}>
+                  <b>{a.title}</b><span>{a.text}</span>
+                </a>
+                <button className="icon-btn" aria-label="Dismiss" onClick={() => setAlerts((x) => x.filter((y) => y.id !== a.id))}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
         {route === 'e' && arg && <ExpenseDetail key={arg} id={arg} onClose={closeDetail} />}
         <ShareInbox />
         {toastNode}
