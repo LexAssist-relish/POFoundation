@@ -8,9 +8,9 @@ import ReceiptReadout from './ReceiptReadout';
 const MODES = [['upi', 'UPI'], ['bank', 'Bank'], ['cash', 'Cash'], ['cheque', 'Cheque']];
 
 export default function MoneyIn() {
-  const { funds, contributions, expenses, users, userById, me, project } = useData();
+  const { funds, contributions, expenses, users, userById, me, project, advances = [] } = useData();
   const [edit, setEdit] = useState(null); // contribution | 'new'
-  const s = useMemo(() => moneySummary({ funds, contributions, expenses, userById }), [funds, contributions, expenses, userById]);
+  const s = useMemo(() => moneySummary({ funds, contributions, expenses, userById, advances }), [funds, contributions, expenses, userById, advances]);
   const myFunds = funds.filter((f) => has(me, 'admin') || f.holder === me.id);
   const restricted = !!me.hide_money_sources; // e.g. Bejoy: sees only his own account
   const shownFunds = restricted ? funds.filter((f) => f.holder === me.id) : funds;
@@ -55,6 +55,11 @@ export default function MoneyIn() {
                 <td className={'r' + (balance < 0 ? ' neg' : '')}><b>{money(balance)}</b></td>
               </tr>
             ))}
+            {s.advances.given > 0 && (
+              <tr><td>Advances — pending settlement<div className="small muted">handed over, not yet covered by bills</div></td>
+                <td className="r">{money(s.advances.given - s.advances.returned)}</td><td className="r">{money(s.advances.settled)}</td>
+                <td className={'r' + (s.advances.pending < 0 ? ' neg' : '')}><b>{money(s.advances.pending)}</b></td></tr>
+            )}
             {s.ownTotal > 0 && (
               <tr><td>Paid from own pocket<div className="small muted">counted as that person’s contribution</div></td>
                 <td className="r">{money(s.ownTotal)}</td><td className="r">{money(s.ownTotal)}</td><td className="r">—</td></tr>

@@ -85,14 +85,17 @@ export const fileToBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-export async function uploadAttachment(expenseId, file, kind) {
+// target: an expense id (string), or { advance_id } for an advance
+export async function uploadAttachment(target, file, kind) {
+  const link = typeof target === 'string' ? { expense_id: target } : target;
+  const folder = link.expense_id || `adv-${link.advance_id}`;
   const f = await compressImage(file);
   const ext = (f.name?.split('.').pop() || (f.type.includes('pdf') ? 'pdf' : 'jpg')).toLowerCase().slice(0, 5);
-  const path = `${expenseId}/${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+  const path = `${folder}/${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
   const { error } = await supabase.storage.from(BUCKET).upload(path, f, { contentType: f.type || undefined });
   if (error) throw new Error('Upload failed: ' + error.message);
   const { error: e2 } = await supabase.from('attachments').insert({
-    expense_id: expenseId, kind, path, file_name: f.name || null, mime: f.type || null,
+    ...link, kind, path, file_name: f.name || null, mime: f.type || null,
   });
   if (e2) { await supabase.storage.from(BUCKET).remove([path]); throw new Error(e2.message); }
 }
@@ -122,18 +125,29 @@ export function downloadCSV(filename, rows) {
 // ---------- Money in / out ----------
 // Per account: received, pledged (not yet in), paid out, balance.
 // Plus "own money": payments made by someone from their own pocket (counts as their contribution).
-export function moneySummary({ funds = [], contributions = [], expenses = [], userById = {} }) {
+export function moneySummary({ funds = [], contributions = [], expenses = [], userById = {}, advances = [] }) {
   const paid = expenses.filter((e) => e.status === 'paid');
   const amt = (e) => Number(e.paid_amount ?? e.approved_amount ?? e.amount ?? 0);
+  const paidAdv = advances.filter((a) => a.status === 'paid' || a.status === 'closed');
   const perFund = funds.map((f) => {
     const cin = contributions.filter((c) => c.fund_id === f.id);
     const received = cin.filter((c) => c.status === 'received').reduce((t, c) => t + Number(c.amount), 0);
     const pledged = cin.filter((c) => c.status === 'pledged').reduce((t, c) => t + Number(c.amount), 0);
-    const out = paid.filter((e) => e.paid_from === f.id).reduce((t, e) => t + amt(e), 0);
+    // bills paid straight from this account + advances paid out of it (less anything returned)
+    const out = paid.filter((e) => e.paid_from === f.id && !e.advance_id).reduce((t, e) => t + amt(e), 0)
+      + paidAdv.filter((a) => a.paid_from === f.id).reduce((t, a) => t + Number(a.paid_amount) - Number(a.returned_amount || 0), 0);
     return { fund: f, received, pledged, out, balance: received - out };
   });
-  const ownPaid = paid.filter((e) => !e.paid_from);
-  const ownTotal = ownPaid.reduce((t, e) => t + amt(e), 0);
+  // Advances: money handed over, then settled by bills
+  const advGiven = paidAdv.reduce((t, a) => t + Number(a.paid_amount), 0);
+  const advReturned = paidAdv.reduce((t, a) => t + Number(a.returned_amount || 0), 0);
+  const advSettled = paid.filter((e) => e.advance_id).reduce((t, e) => t + amt(e), 0);
+  const advances_ = { given: advGiven, returned: advReturned, settled: advSettled, pending: advGiven - advReturned - advSettled };
+  // own-pocket: bills, plus advances paid by someone from their own money
+  const ownAdv = paidAdv.filter((a) => !a.paid_from);
+  const ownPaid = paid.filter((e) => !e.paid_from && !e.advance_id);
+  const ownTotal = ownPaid.reduce((t, e) => t + amt(e), 0)
+    + ownAdv.reduce((t, a) => t + Number(a.paid_amount) - Number(a.returned_amount || 0), 0);
 
   // Contributors: money given into an account + bills paid from own pocket
   const people = new Map();
@@ -145,13 +159,32 @@ export function moneySummary({ funds = [], contributions = [], expenses = [], us
   contributions.forEach((c) => add(c.contributor_id && userById[c.contributor_id] ? userById[c.contributor_id].full_name : c.contributor,
     c.status === 'received' ? 'received' : 'pledged', Number(c.amount)));
   ownPaid.forEach((e) => add(userById[e.paid_by]?.full_name || 'Unknown', 'direct', amt(e)));
+  ownAdv.forEach((a) => add(userById[a.paid_by]?.full_name || 'Unknown', 'direct', Number(a.paid_amount) - Number(a.returned_amount || 0)));
   const contributors = [...people.values()].map((p) => ({ ...p, total: p.received + p.direct }))
     .sort((a, b) => b.total - a.total || b.pledged - a.pledged);
 
   const totalIn = perFund.reduce((t, f) => t + f.received, 0) + ownTotal;
   const totalOut = paid.reduce((t, e) => t + amt(e), 0);
   const totalPledged = perFund.reduce((t, f) => t + f.pledged, 0);
-  return { perFund, ownTotal, contributors, totalIn, totalOut, totalPledged };
+  return { perFund, ownTotal, contributors, totalIn, totalOut, totalPledged, advances: advances_ };
 }
 
 export const fundName = (funds, id) => (id ? funds.find((f) => f.id === id)?.name || 'Account' : 'Own money');
+
+// One advance: how much was handed over, how much has been settled by bills, what's still pending
+export function advanceBalance(a, expenses = []) {
+  const given = Number(a.paid_amount ?? 0);
+  const bills = expenses.filter((e) => e.advance_id === a.id && e.status === 'paid');
+  const settled = bills.reduce((t, e) => t + Number(e.paid_amount ?? e.amount ?? 0), 0);
+  const returned = Number(a.returned_amount || 0);
+  return { given, settled, returned, pending: given - settled - returned, bills };
+}
+
+export const ADV_STATUS = {
+  requested: { label: 'Awaiting approval', tone: 'amber' },
+  query: { label: 'Query raised', tone: 'orange' },
+  approved: { label: 'Awaiting payment', tone: 'blue' },
+  paid: { label: 'Pending settlement', tone: 'teal' },
+  rejected: { label: 'Rejected', tone: 'grey' },
+  closed: { label: 'Settled', tone: 'green' },
+};

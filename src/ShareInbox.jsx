@@ -4,13 +4,16 @@ import { rpc, notifyPayment, readReceipt } from './supabase';
 import { money, has, uploadAttachment, effAmount } from './util';
 import { Sheet, Field, Chip } from './ui';
 import ReceiptReadout from './ReceiptReadout';
+import SettleForm from './SettleForm';
+import { go } from './App';
 
 const HOW = { utr: 'same UTR already recorded', reference: 'bill number in the payment note', 'amount+payee': 'amount and payee', amount: 'amount' };
 
 // Receives a payment receipt shared from GPay / a bank app (via the service worker),
 // reads it with GPT-4o, and pre-selects the bill it pays. The payer confirms with one tap.
 export default function ShareInbox() {
-  const { expenses, me, payeeById, attByExp, reload, toast, funds = [] } = useData();
+  const { expenses, me, payeeById, attByExp, reload, toast, funds = [], advances = [], userById } = useData();
+  const [settleFile, setSettleFile] = useState(null); // receipt for a bill this person paid themselves
   const [paidFrom, setPaidFrom] = useState(funds.find((f) => f.holder === me.id)?.id || '');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -33,6 +36,15 @@ export default function ShareInbox() {
         setFile(f);
         const m = (meta.text || '').match(/\b\d{12}\b/); // GPay sometimes puts the UPI ref in the shared text
         if (m) setRef(m[0]);
+        // Someone who only spends (e.g. Bejoy) and has nothing to pay for others → straight to "I paid a bill"
+        const payingFor = expenses.some((e) => e.status === 'approved' && e.payer_id === me.id)
+          || advances.some((a) => a.status === 'approved' && a.payer_id === me.id);
+        const canSettle = advances.some((a) => a.status === 'paid' && a.requested_by === me.id) || funds.some((x) => x.holder === me.id);
+        if (!payingFor && canSettle && !has(me, 'admin')) {
+          setSettleFile(f); setFile(null);
+          try { await cache.delete('/_share/file'); await cache.delete('/_share/meta'); } catch {}
+          return;
+        }
         if (f.type.startsWith('image/')) setPreview(URL.createObjectURL(f));
 
         // Read it with GPT-4o and find the bill
@@ -68,6 +80,23 @@ export default function ShareInbox() {
   const x = reading?.extracted;
   const failed = x?.status === 'failed';
   const chosen = expenses.find((e) => e.id === pick);
+  // advances this person has been asked to pay (to Bejoy)
+  const advToPay = advances.filter((a) => a.status === 'approved' && (a.payer_id === me.id || has(me, 'admin')))
+    .sort((a, b) => Math.abs(Number(a.approved_amount) - (x?.amount ?? 0)) - Math.abs(Number(b.approved_amount) - (x?.amount ?? 0)));
+  const chosenAdv = advances.find((a) => 'adv:' + a.id === pick);
+  const canSettleSelf = advances.some((a) => a.status === 'paid' && a.requested_by === me.id) || funds.some((f) => f.holder === me.id);
+
+  const payAdvance = async () => {
+    setBusy(true);
+    try {
+      await uploadAttachment({ advance_id: chosenAdv.id }, file, 'receipt');
+      await rpc('mark_advance_paid', { p_id: chosenAdv.id, p_mode: x?.mode || 'upi', p_ref: ref.trim() || null,
+        p_amount: x?.amount ?? Number(chosenAdv.approved_amount), p_from: paidFrom || null });
+      await reload(); toast(`${chosenAdv.serial} paid — now pending settlement`);
+      const id = chosenAdv.id; await clear(); go('#/a/' + id);
+    } catch (err) { toast(err.message, 'err'); }
+    setBusy(false);
+  };
 
   const attach = async () => {
     const e = chosen;
@@ -88,6 +117,7 @@ export default function ShareInbox() {
     setBusy(false);
   };
 
+  if (settleFile) return <SettleForm initialReceipt={settleFile} onClose={(id) => { setSettleFile(null); if (id) go('#/e/' + id); }} />;
   if (!file) return null;
   const amountDiffers = chosen && x?.amount != null && Math.abs(effAmount(chosen) - x.amount) >= 1;
   return (
@@ -95,8 +125,28 @@ export default function ShareInbox() {
       {preview ? <img src={preview} alt="Shared receipt" className="share-preview" /> : <p className="muted">📄 {file.name}</p>}
       <ReceiptReadout reading={reading} />
 
+      {advToPay.length > 0 && (
+        <>
+          <p className="small muted">Advance you were asked to pay:</p>
+          <div className="pick-list">
+            {advToPay.map((a) => (
+              <label key={a.id} className={'pick' + (pick === 'adv:' + a.id ? ' on' : '')}>
+                <input type="radio" name="pick" checked={pick === 'adv:' + a.id} onChange={() => setPick('adv:' + a.id)} />
+                <div className="ri-main"><div className="ri-title">Advance to {userById[a.requested_by]?.full_name} <span className="ri-serial">{a.serial}</span></div><div className="ri-sub">{a.purpose}</div></div>
+                <div className="ri-side"><div className="ri-amt">{money(a.approved_amount)}</div></div>
+              </label>
+            ))}
+          </div>
+          {chosenAdv && (
+            <button className="btn primary block" disabled={busy || failed || reading?.loading} onClick={payAdvance}>{busy ? 'Saving…' : `Confirm: ${chosenAdv.serial} paid`}</button>
+          )}
+        </>
+      )}
+      {canSettleSelf && (
+        <button className="btn ghost block" style={{ margin: '8px 0' }} onClick={() => { const f = file; clear().then(() => setSettleFile(f)); }}>🧾 This is a bill I paid myself</button>
+      )}
       {candidates.length === 0 ? (
-        <p className="note orange">No approved bills are waiting for your payment. Open the bill and attach the receipt from there.</p>
+        !advToPay.length && <p className="note orange">No approved bills are waiting for your payment. Open the bill and attach the receipt from there.</p>
       ) : (
         <>
           <p className="small muted">

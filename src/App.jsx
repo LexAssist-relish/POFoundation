@@ -10,6 +10,8 @@ import Payees from './Payees';
 import Users from './Users';
 import More from './More';
 import MoneyIn from './MoneyIn';
+import BejoyHome from './BejoyHome';
+import { AdvanceDetail } from './Advances';
 import ShareInbox from './ShareInbox';
 
 const DataCtx = createContext(null);
@@ -94,21 +96,26 @@ function Shell({ userId }) {
   const [state, setState] = useState({ loading: true });
 
   const load = useCallback(async () => {
-    const [me, proj, users, payees, cats, exps, atts, fundsR, contribR] = await Promise.all([
+    const [me, proj, users, payees, cats, exps, atts, fundsR, contribR, advR] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
       supabase.from('projects').select('*').eq('code', 'bejoy-marriage').maybeSingle(),
       supabase.from('profiles').select('*').order('full_name'),
       supabase.from('payees').select('*').order('name'),
       supabase.from('categories').select('*').order('sort'),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }).order('created_at', { ascending: false }),
-      supabase.from('attachments').select('id, expense_id, kind, path, file_name, mime, uploaded_by, created_at').order('created_at'),
+      supabase.from('attachments').select('*').order('created_at'),
       supabase.from('funds').select('*').order('sort'),
       supabase.from('contributions').select('*').order('received_on', { ascending: false, nullsFirst: true }).order('created_at', { ascending: false }),
+      supabase.from('advances').select('*').order('created_at', { ascending: false }),
     ]);
     const err = [me, proj, users, payees, cats, exps, atts].find((r) => r.error)?.error;
     if (err) { setState((s) => ({ ...s, loading: false, error: err.message })); return; }
     const attByExp = {};
-    (atts.data || []).forEach((a) => { (attByExp[a.expense_id] ||= []).push(a); });
+    const attByAdv = {};
+    (atts.data || []).forEach((a) => {
+      if (a.expense_id) (attByExp[a.expense_id] ||= []).push(a);
+      if (a.advance_id) (attByAdv[a.advance_id] ||= []).push(a);
+    });
     setState({
       loading: false, me: me.data, project: proj.data, users: users.data || [], payees: payees.data || [],
       categories: (cats.data || []).filter((c) => !proj.data || c.project_id === proj.data.id),
@@ -117,6 +124,10 @@ function Shell({ userId }) {
       // funds/contributions exist once 004_contributions.sql has run; until then the app works without them
       funds: fundsR.error ? [] : (fundsR.data || []).filter((f) => !proj.data || f.project_id === proj.data.id),
       contributions: contribR.error ? [] : (contribR.data || []).filter((c) => !proj.data || c.project_id === proj.data.id),
+      // advances exist once 005_advances.sql has run
+      advances: advR.error ? [] : (advR.data || []).filter((a) => !proj.data || a.project_id === proj.data.id),
+      advancesReady: !advR.error,
+      attByAdv,
     });
   }, [userId]);
 
@@ -131,6 +142,7 @@ function Shell({ userId }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments' }, bump)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payees' }, bump)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contributions' }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'advances' }, bump)
       .subscribe();
     const vis = () => document.visibilityState === 'visible' && bump();
     document.addEventListener('visibilitychange', vis);
@@ -191,8 +203,11 @@ function Shell({ userId }) {
   const isAdmin = has(me, 'admin');
 
   const [route, arg] = hash.replace(/^#\/?/, '').split('/');
-  const tab = route === 'e' ? (sessionStorage.getItem('pof-tab') || 'home') : (route || 'home');
-  if (route !== 'e') try { sessionStorage.setItem('pof-tab', tab); } catch {}
+  const isSheet = route === 'e' || route === 'a';
+  const tab = isSheet ? (sessionStorage.getItem('pof-tab') || 'home') : (route || 'home');
+  if (!isSheet) try { sessionStorage.setItem('pof-tab', tab); } catch {}
+  // Bejoy (enters bills, doesn't approve or pay) gets his own simple home screen
+  const simpleHome = has(me, 'inputter') && !has(me, 'admin') && !has(me, 'approver') && !has(me, 'payer');
 
   const navItems = [
     ['home', '⌂', 'Home', true],
@@ -207,9 +222,13 @@ function Shell({ userId }) {
   const myActions = state.expenses.filter((e) =>
     (e.status === 'submitted' && has(me, 'approver')) ||
     (e.status === 'approved' && e.payer_id === me.id) ||
-    (e.status === 'query' && e.submitted_by === me.id)).length;
+    (e.status === 'query' && e.submitted_by === me.id)).length
+    + state.advances.filter((a) =>
+    (a.status === 'requested' && has(me, 'approver')) ||
+    (a.status === 'approved' && a.payer_id === me.id) ||
+    (a.status === 'query' && a.requested_by === me.id)).length;
 
-  const closeDetail = () => (history.length > 1 && route === 'e' ? history.back() : go('#/' + tab));
+  const closeDetail = () => (history.length > 1 && isSheet ? history.back() : go('#/' + tab));
 
   return (
     <DataCtx.Provider value={ctx}>
@@ -231,7 +250,7 @@ function Shell({ userId }) {
         </nav>
 
         <main className="main">
-          {tab === 'home' && <Dashboard />}
+          {tab === 'home' && (simpleHome ? <BejoyHome /> : <Dashboard />)}
           {tab === 'daybook' && <Daybook />}
           {tab === 'new' && canInput && <ExpenseForm onDone={(id) => go('#/e/' + id)} />}
           {tab === 'money' && <MoneyIn />}
@@ -254,6 +273,7 @@ function Shell({ userId }) {
           </div>
         )}
         {route === 'e' && arg && <ExpenseDetail key={arg} id={arg} onClose={closeDetail} />}
+        {route === 'a' && arg && <AdvanceDetail key={arg} id={arg} onClose={closeDetail} />}
         <ShareInbox />
         {toastNode}
       </div>

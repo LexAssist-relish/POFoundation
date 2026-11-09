@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useData, go } from './App';
 import { money, has, effAmount, fmtDate, moneySummary } from './util';
 import { Chip, Empty } from './ui';
+import { AdvanceCard } from './Advances';
 
 export const openDaybook = (filter) => {
   try { sessionStorage.setItem('pof-filter', JSON.stringify(filter)); } catch {}
@@ -9,9 +10,12 @@ export const openDaybook = (filter) => {
 };
 
 export default function Dashboard() {
-  const { me, project, expenses, categories, users, userById, payeeById, funds = [], contributions = [] } = useData();
+  const { me, project, expenses, categories, users, userById, payeeById, funds = [], contributions = [], advances = [] } = useData();
   const showMoney = funds.length > 0 && !me.hide_money_sources;
-  const ms = useMemo(() => moneySummary({ funds, contributions, expenses, userById }), [funds, contributions, expenses, userById]);
+  const ms = useMemo(() => moneySummary({ funds, contributions, expenses, userById, advances }), [funds, contributions, expenses, userById, advances]);
+  const advToApprove = advances.filter((a) => a.status === 'requested');
+  const advToPay = advances.filter((a) => a.status === 'approved' && a.payer_id === me.id);
+  const advOpen = advances.filter((a) => a.status === 'paid');
 
   const s = useMemo(() => {
     const live = expenses.filter((e) => e.status !== 'rejected');
@@ -46,6 +50,10 @@ export default function Dashboard() {
     actions.push({ n: s.submitted.length, t: 'to approve', amt: s.submitted.reduce((t, e) => t + Number(e.amount), 0), tone: 'amber', f: { status: 'submitted' } });
   if (has(me, 'payer') && myToPay.length)
     actions.push({ n: myToPay.length, t: 'for you to pay', amt: myToPay.reduce((t, e) => t + effAmount(e), 0), tone: 'blue', f: { status: 'approved', payer: me.id } });
+  if (has(me, 'approver') && advToApprove.length)
+    actions.push({ n: advToApprove.length, t: advToApprove.length > 1 ? 'advances to approve' : 'advance to approve', amt: advToApprove.reduce((t, a) => t + Number(a.amount), 0), tone: 'amber', href: '#/a/' + advToApprove[0].id });
+  if (advToPay.length)
+    actions.push({ n: advToPay.length, t: advToPay.length > 1 ? 'advances for you to pay' : 'advance for you to pay', amt: advToPay.reduce((t, a) => t + Number(a.approved_amount), 0), tone: 'blue', href: '#/a/' + advToPay[0].id });
   if (myQueries.length)
     actions.push({ n: myQueries.length, t: 'queries to answer', amt: null, tone: 'orange', f: { status: 'query' } });
 
@@ -61,7 +69,7 @@ export default function Dashboard() {
       {actions.length > 0 && (
         <div className="actions">
           {actions.map((a) => (
-            <button key={a.t} className={`action ${a.tone}`} onClick={() => openDaybook(a.f)}>
+            <button key={a.t} className={`action ${a.tone}`} onClick={() => (a.href ? (location.hash = a.href) : openDaybook(a.f))}>
               <span className="action-n">{a.n}</span>
               <span className="action-t">{a.t}{a.amt !== null && <b>{money(a.amt)}</b>}</span>
               <span className="action-go">›</span>
@@ -99,6 +107,7 @@ export default function Dashboard() {
                   <td className={'r' + (balance < 0 ? ' neg' : '')}><b>{money(balance)}</b></td>
                 </tr>
               ))}
+              {(ms.advances.given > 0) && <tr className="click" onClick={() => { location.hash = '#/money'; }}><td>Advances (pending settlement)</td><td className="r">{money(ms.advances.given - ms.advances.returned)}</td><td className="r">{money(ms.advances.settled)}</td><td className={'r' + (ms.advances.pending < 0 ? ' neg' : '')}><b>{money(ms.advances.pending)}</b></td></tr>}
               {ms.ownTotal > 0 && <tr><td>Paid from own pocket</td><td className="r">{money(ms.ownTotal)}</td><td className="r">{money(ms.ownTotal)}</td><td className="r">—</td></tr>}
               <tr className="total"><td>Total</td><td className="r">{money(ms.totalIn)}</td><td className="r">{money(ms.totalOut)}</td>
                 <td className={'r' + (ms.totalIn - ms.totalOut < 0 ? ' neg' : '')}>{money(ms.totalIn - ms.totalOut)}</td></tr>
@@ -148,6 +157,13 @@ export default function Dashboard() {
             )}
         </section>
       </div>
+
+      {advOpen.length > 0 && (
+        <section>
+          <h2>Advances pending settlement</h2>
+          <div className="adv-list">{advOpen.map((a) => <AdvanceCard key={a.id} a={a} />)}</div>
+        </section>
+      )}
 
       <section className="card">
         <h2>Latest</h2>

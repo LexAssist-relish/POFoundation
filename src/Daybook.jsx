@@ -107,7 +107,7 @@ export default function Daybook() {
                     <div className="ri-meta">
                       {bills > 0 && <span title="Bills">🧾 {bills}</span>}
                       {rcpt > 0 && <span title="Payment receipts">✅ {rcpt}</span>}
-                      {e.payer_id && <span>→ {userById[e.paid_by || e.payer_id]?.full_name}</span>}
+                      {e.advance_id ? <span>↳ settled from advance</span> : e.payer_id && <span>→ {userById[e.paid_by || e.payer_id]?.full_name}</span>}
                       {e.payment_ref && <span className="mono">{e.payment_ref}</span>}
                     </div>
                   </div>

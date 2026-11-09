@@ -50,28 +50,28 @@ export default function BejoyHome() {
         </button>
       </div>
 
-      {openAdv.length > 0 && (
-        <section>
-          <div className="section-head">
-            <h2>Pending settlement</h2>
-            <span className={'pend-total' + (pendingTotal < 0 ? ' neg' : '')}>{pendingTotal < 0 ? `Over by ${money(-pendingTotal)}` : money(pendingTotal)}</span>
-          </div>
-          <p className="small muted" style={{ margin: '0 0 8px' }}>Money advanced to you that isn’t covered by bills yet. Add each bill you pay to bring this to zero.</p>
-          <div className="adv-list">{openAdv.map((a) => <AdvanceCard key={a.id} a={a} onSettle={(x) => setSheet({ type: 'settle', adv: x })} />)}</div>
-        </section>
-      )}
+      <section>
+        <div className="section-head">
+          <h2>Pending settlement</h2>
+          <span className={'pend-total' + (pendingTotal < 0 ? ' neg' : '')}>{pendingTotal < 0 ? `Over by ${money(-pendingTotal)}` : money(pendingTotal)}</span>
+        </div>
+        <p className="small muted" style={{ margin: '0 0 8px' }}>Money advanced to you that isn’t covered by bills yet. Add each bill you pay to bring this to zero.</p>
+        {openAdv.length > 0
+          ? <div className="adv-list">{openAdv.map((a) => <AdvanceCard key={a.id} a={a} onSettle={(x) => setSheet({ type: 'settle', adv: x })} />)}</div>
+          : <div className="card muted small">No advance with you right now.</div>}
+      </section>
 
-      {inProgress.length > 0 && (
-        <section>
-          <h2>Advances requested</h2>
-          <div className="adv-list">{inProgress.map((a) => <AdvanceCard key={a.id} a={a} />)}</div>
-        </section>
-      )}
+      <section>
+        <h2>Advances requested</h2>
+        {inProgress.length > 0
+          ? <div className="adv-list">{inProgress.map((a) => <AdvanceCard key={a.id} a={a} />)}</div>
+          : <div className="card muted small">None waiting. Use <b>Request a payment → Advance</b> to ask for one.</div>}
+      </section>
 
-      {toBePaid.length > 0 && (
-        <section className="card">
-          <h2>Bills to be paid</h2>
-          {toBePaid.map((e) => (
+      <section className="card">
+        <h2>Bills to be paid</h2>
+        {toBePaid.length === 0 && <p className="muted small">None waiting. Use <b>Request a payment → Bill to be paid</b> for a vendor’s bill.</p>}
+        {toBePaid.map((e) => (
             <a key={e.id} className="row-item" href={'#/e/' + e.id}>
               <div className="ri-main">
                 <div className="ri-title">{payeeById[e.payee_id]?.name || e.description} <span className="ri-serial">{e.serial}</span></div>
@@ -80,8 +80,7 @@ export default function BejoyHome() {
               <div className="ri-side"><div className="ri-amt">{money(effAmount(e))}</div><Chip status={e.status} /></div>
             </a>
           ))}
-        </section>
-      )}
+      </section>
 
       {myFund && fundRow && (fundRow.received > 0 || fundRow.out > 0) && (
         <section className="card">

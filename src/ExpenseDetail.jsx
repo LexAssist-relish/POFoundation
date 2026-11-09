@@ -8,7 +8,7 @@ import { Sheet, Chip, Field, FilePicker, PendingFiles, Attachments } from './ui'
 import ExpenseForm from './ExpenseForm';
 
 export default function ExpenseDetail({ id, onClose }) {
-  const { expenses, me, userById, payeeById, attByExp, reload, toast, funds = [] } = useData();
+  const { expenses, me, userById, payeeById, attByExp, reload, toast, funds = [], advances = [] } = useData();
   const e = expenses.find((x) => x.id === id);
   const [log, setLog] = useState([]);
   const [editing, setEditing] = useState(false);
@@ -27,7 +27,8 @@ export default function ExpenseDetail({ id, onClose }) {
   const isMine = e.submitted_by === me.id;
   const canPay = e.status === 'approved' && (e.payer_id === me.id || isAdmin);
   const canEdit = (isMine && ['submitted', 'query'].includes(e.status)) || (isAdmin && e.status !== 'paid');
-  const canDeleteExp = isAdmin ? e.status !== 'paid' : (isMine && ['submitted', 'query'].includes(e.status));
+  const selfPaid = !!(e.advance_id || e.prepaid_fund); // recorded via "I paid a bill" — the person can correct it
+  const canDeleteExp = isAdmin ? (e.status !== 'paid' || selfPaid) : (isMine && (['submitted', 'query'].includes(e.status) || selfPaid));
   const altered = e.approved_amount !== null && Number(e.approved_amount) !== Number(e.amount);
 
   const delExpense = async () => {
@@ -68,7 +69,9 @@ export default function ExpenseDetail({ id, onClose }) {
         {e.status === 'paid' && <>
           <div><dt>Paid</dt><dd>{money(e.paid_amount)} · {e.payment_mode?.toUpperCase()} · {fmtDateTime(e.paid_at)}</dd></div>
           <div><dt>UTR / Ref</dt><dd className="mono">{e.payment_ref || '—'}</dd></div>
-          {!me.hide_money_sources && <div><dt>Paid from</dt><dd>{e.paid_from ? (funds.find((f) => f.id === e.paid_from)?.name || 'Account') : `${userById[e.paid_by]?.full_name || 'Payer'}'s own money`}</dd></div>}
+          {e.advance_id
+            ? <div><dt>Paid from</dt><dd><a href={'#/a/' + e.advance_id}>Advance {advances.find((a) => a.id === e.advance_id)?.serial}</a></dd></div>
+            : !me.hide_money_sources && <div><dt>Paid from</dt><dd>{e.paid_from ? (funds.find((f) => f.id === e.paid_from)?.name || 'Account') : `${userById[e.paid_by]?.full_name || 'Payer'}'s own money`}</dd></div>}
         </>}
       </dl>
       {e.prepaid_fund && e.status !== 'paid' && <div className="note small">Already paid by <b>{userById[e.submitted_by]?.full_name}</b> from <b>{funds.find((f) => f.id === e.prepaid_fund)?.name}</b> — needs approval to be recorded.</div>}
