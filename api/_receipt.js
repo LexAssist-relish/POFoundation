@@ -15,7 +15,8 @@ Return ONLY a JSON object with these keys:
   "beneficiary_upi": string or null,        // payee UPI ID like name@okaxis, if shown
   "transaction_date": "YYYY-MM-DD" or null,
   "note": string or null,                   // message / remarks / purpose typed by the payer
-  "bank_name": string or null               // bank the money was paid FROM, if shown
+  "bank_name": string or null,              // bank the money was paid FROM, if shown
+  "raw_text": string                         // ALL text visible on the receipt, top to bottom, labels included
 }
 
 UTR rules — the reference banks use to trace the transfer. It appears under one of these labels:
@@ -31,6 +32,32 @@ UTR rules — the reference banks use to trace the transfer. It appears under on
 
 status: "success" only if the receipt clearly says paid/successful/completed. "failed" if failed/declined/reversed.
 If the image is not a payment receipt at all, set is_payment_receipt=false and everything else null.`;
+
+// Backup when the model's utr is missing or rejected: look for a reference right after a known label.
+const UTR_LABELS = [
+  'upi transaction id', 'upi txn id', 'upi ref(?:erence)?(?:\\.)?\\s*(?:no|number)?', 'utr(?:\\s*(?:no|number))?',
+  'transaction id', 'txn id', 'rrn(?:\\s*number)?', 'ref(?:erence)?(?:\\.)?\\s*(?:no|number)', 'imps ref(?:\\s*no)?', 'neft ref(?:\\s*no)?',
+];
+export function findUtrInText(text) {
+  if (!text) return null;
+  const t = String(text).replace(/\r/g, '');
+  const ignore = /google transaction id|order id|merchant/i;
+  for (const lab of UTR_LABELS) {
+    const re = new RegExp(`(${lab})\\s*[:#.\\-]?\\s*\\n?\\s*([A-Za-z0-9 ]{9,30})`, 'gi');
+    let m;
+    while ((m = re.exec(t))) {
+      const before = t.slice(Math.max(0, m.index - 12), m.index + m[1].length);
+      if (ignore.test(before)) continue;
+      const cand = cleanUtr(m[2].replace(/\s+/g, '').toUpperCase().slice(0, 22))
+        || cleanUtr((m[2].match(/\d[\d ]{8,14}\d/) || [''])[0]);
+      if (cand) return cand;
+    }
+  }
+  // last resort: a lone 12-digit UPI reference anywhere on the receipt
+  const twelve = [...t.matchAll(/(?<![\d])(\d{4}\s?\d{4}\s?\d{4})(?![\d])/g)].map((x) => x[1].replace(/\s/g, ''));
+  const uniq = [...new Set(twelve)];
+  return uniq.length === 1 ? uniq[0] : null;
+}
 
 // A UTR we trust: 12-digit UPI/IMPS, 9-digit older NEFT, or an uppercase alphanumeric bank ref (9–22 chars, has letters and digits)
 export function cleanUtr(raw) {
@@ -137,7 +164,7 @@ export async function extractReceipt({ base64, mime, fileName }) {
     is_payment_receipt: x.is_payment_receipt !== false,
     status: ['success', 'failed', 'pending'].includes(x.status) ? x.status : 'unknown',
     amount: Number.isFinite(amount) && amount > 0 ? amount : null,
-    utr: cleanUtr(x.utr),
+    utr: cleanUtr(x.utr) || findUtrInText(x.raw_text),
     utr_raw: x.utr || null,
     mode: x.mode === 'bank' ? 'bank' : x.mode === 'upi' ? 'upi' : null,
     beneficiary_name: x.beneficiary_name || null,
