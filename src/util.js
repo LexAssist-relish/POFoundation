@@ -30,14 +30,18 @@ export const effAmount = (e) => Number(e.status === 'paid' ? (e.paid_amount ?? e
   : (e.approved_amount ?? e.amount));
 
 // ---------- UPI ----------
+// UPI deep link / QR text, in the format NPCI apps expect:
+// upi://pay?pa=name@bank&pn=Name&am=100.00&cu=INR&tn=Note
+// The UPI ID is written as-is (a "%40" instead of "@" makes GPay reject the QR).
 export function upiLink({ vpa, name, amount, note }) {
-  const p = new URLSearchParams();
-  p.set('pa', vpa.trim());
-  if (name) p.set('pn', name.slice(0, 40));
-  if (amount) p.set('am', Number(amount).toFixed(2));
-  p.set('cu', 'INR');
-  if (note) p.set('tn', note.slice(0, 60));
-  return 'upi://pay?' + p.toString().replace(/\+/g, '%20');
+  const enc = (v) => encodeURIComponent(String(v)).replace(/%40/g, '@');
+  const clean = (v, max) => String(v || '').replace(/[&=?#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  const parts = [`pa=${String(vpa).trim()}`];
+  if (name) parts.push(`pn=${enc(clean(name, 40))}`);
+  if (amount && Number(amount) > 0) parts.push(`am=${Number(amount).toFixed(2)}`);
+  parts.push('cu=INR');
+  if (note) parts.push(`tn=${enc(clean(note, 60))}`);
+  return 'upi://pay?' + parts.join('&');
 }
 
 // Phone numbers are stored with country code, digits only: 919446051944, 60123456789.
@@ -188,3 +192,37 @@ export const ADV_STATUS = {
   rejected: { label: 'Rejected', tone: 'grey' },
   closed: { label: 'Settled', tone: 'green' },
 };
+
+// ---------- Bank details ----------
+export const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
+// Pull account name / number / IFSC / bank out of pasted text (WhatsApp message, SMS, cheque-leaf text…)
+export function parseBankDetails(text) {
+  const t = String(text || '').replace(/\r/g, '');
+  const out = {};
+  const ifsc = t.toUpperCase().match(/\b([A-Z]{4}0[A-Z0-9]{6})\b/);
+  if (ifsc) out.ifsc = ifsc[1];
+  const labelled = t.match(/(?:a\/?c|acc(?:ount)?|acct)\.?\s*(?:no|number|#)?\.?\s*[:\-#]?\s*([0-9][0-9 \-]{7,22}[0-9])/i);
+  const acc = labelled ? labelled[1] : (t.match(/\b(\d{9,18})\b/) || [])[1];
+  if (acc) out.account_no = acc.replace(/[\s-]/g, '');
+  const name = t.match(/(?:a\/?c(?:count)?\s*(?:holder)?\s*name|name|beneficiary|holder)\s*[:\-]\s*([^\n,]{2,60})/i);
+  if (name) out.account_name = name[1].trim();
+  const bank = t.match(/(?:bank(?:\s*name)?)\s*[:\-]\s*([^\n,]{2,60})/i)
+    || t.match(/\b([A-Z][A-Za-z ]{1,30} Bank)\b/);
+  if (bank) out.bank_name = bank[1].trim();
+  return out;
+}
+
+export function bankText(p) {
+  return [p.account_name && `Name: ${p.account_name}`, p.account_no && `A/c No: ${p.account_no}`,
+    p.ifsc && `IFSC: ${p.ifsc}`, p.bank_name && `Bank: ${p.bank_name}`].filter(Boolean).join('\n');
+}
+
+export async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {
+    const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch {}
+    t.remove(); return ok;
+  }
+}

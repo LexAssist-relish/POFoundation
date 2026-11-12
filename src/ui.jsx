@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { STATUS, signedUrl } from './util';
+import { STATUS, signedUrl, copyText, bankText } from './util';
 
 export function Sheet({ title, onClose, children, footer, wide }) {
   useEffect(() => {
@@ -146,4 +146,35 @@ export function useToast() {
   };
   const node = t ? <div className={`toast ${t.tone}`} onClick={() => setT(null)}>{t.msg}</div> : null;
   return [show, node];
+}
+
+// A row showing one value with a Copy button
+export function CopyRow({ label, value, mono = true }) {
+  const [done, setDone] = useState(false);
+  if (!value) return null;
+  return (
+    <div className="copy-row">
+      <div><small>{label}</small><b className={mono ? 'mono' : ''}>{value}</b></div>
+      <button type="button" onClick={async () => { await copyText(value); setDone(true); setTimeout(() => setDone(false), 1600); }}>
+        {done ? 'Copied ✓' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+// Payee's bank details with copy buttons, plus "Copy all"
+export function BankDetails({ p }) {
+  const [all, setAll] = useState(false);
+  if (!p || !(p.account_no || p.ifsc)) return null;
+  return (
+    <div className="bank-box">
+      <CopyRow label="Account name" value={p.account_name || p.name} mono={false} />
+      <CopyRow label="Account no." value={p.account_no} />
+      <CopyRow label="IFSC" value={p.ifsc} />
+      {p.bank_name && <CopyRow label="Bank" value={p.bank_name} mono={false} />}
+      <button type="button" className="btn ghost small" onClick={async () => {
+        await copyText(bankText({ ...p, account_name: p.account_name || p.name })); setAll(true); setTimeout(() => setAll(false), 1600);
+      }}>{all ? 'Copied all ✓' : '📋 Copy all details'}</button>
+    </div>
+  );
 }

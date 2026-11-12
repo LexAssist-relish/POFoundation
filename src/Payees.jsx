@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useData } from './App';
 import { supabase } from './supabase';
-import { has, money, effAmount } from './util';
-import { Field, Sheet, Empty } from './ui';
+import { has, money, effAmount, parseBankDetails, IFSC_RE } from './util';
+import { Field, Sheet, Empty, BankDetails } from './ui';
 
 const UPI_RE = /^[\w.\-]{2,256}@[a-zA-Z][a-zA-Z0-9.]{1,63}$/;
 
@@ -11,6 +11,7 @@ export function PayeeForm({ initial, onSaved, me }) {
   const [v, setV] = useState({
     name: initial?.name || '', upi_id: initial?.upi_id || '', phone: initial?.phone || '',
     bank_note: initial?.bank_note || '', category: initial?.category || '', notes: initial?.notes || '',
+    account_name: initial?.account_name || '', account_no: initial?.account_no || '', ifsc: initial?.ifsc || '', bank_name: initial?.bank_name || '',
     verified: initial?.verified ?? false,
   });
   const [busy, setBusy] = useState(false);
@@ -21,10 +22,15 @@ export function PayeeForm({ initial, onSaved, me }) {
     e.preventDefault(); e.stopPropagation();
     const upi = v.upi_id.trim();
     if (upi && !UPI_RE.test(upi)) return toast('That UPI ID doesn’t look right (name@bank)', 'err');
+    const acc = v.account_no.replace(/[\s-]/g, ''); const ifsc = v.ifsc.trim().toUpperCase();
+    if (acc && !/^\d{9,18}$/.test(acc)) return toast('Account number should be 9–18 digits', 'err');
+    if (ifsc && !IFSC_RE.test(ifsc)) return toast('IFSC should look like SIBL0000915 (11 characters)', 'err');
+    if ((acc && !ifsc) || (ifsc && !acc)) return toast('Enter both account number and IFSC', 'err');
     setBusy(true);
     const row = {
       name: v.name.trim(), upi_id: upi || null, phone: v.phone.replace(/[^\d+]/g, '') || null,
       bank_note: v.bank_note.trim() || null, category: v.category || null, notes: v.notes.trim() || null,
+      account_name: v.account_name.trim() || null, account_no: acc || null, ifsc: ifsc || null, bank_name: v.bank_name.trim() || null,
       verified: canVerify ? v.verified : (initial?.verified ?? false) && upi === (initial?.upi_id || ''),
       updated_at: new Date().toISOString(),
     };
@@ -52,7 +58,23 @@ export function PayeeForm({ initial, onSaved, me }) {
           </select>
         </Field>
       </div>
-      <Field label="Bank details (if no UPI)"><input value={v.bank_note} onChange={set('bank_note')} placeholder="A/c no, IFSC, name" /></Field>
+      <div className="field">
+        <span className="field-label">Bank account</span>
+        <textarea rows={2} className="paste-box" placeholder="Paste account details here (from WhatsApp/SMS) — name, A/c no and IFSC fill in automatically"
+          onChange={(e) => {
+            const d = parseBankDetails(e.target.value);
+            if (Object.keys(d).length) setV((x) => ({ ...x, ...Object.fromEntries(Object.entries(d).filter(([, val]) => val)) }));
+          }} />
+        <div className="grid2 tight" style={{ marginTop: 8 }}>
+          <Field label="Account name"><input value={v.account_name} onChange={set('account_name')} placeholder="As per bank" /></Field>
+          <Field label="Bank"><input value={v.bank_name} onChange={set('bank_name')} placeholder="e.g. South Indian Bank" /></Field>
+        </div>
+        <div className="grid2 tight">
+          <Field label="Account number"><input className="mono" inputMode="numeric" value={v.account_no} onChange={set('account_no')} /></Field>
+          <Field label="IFSC"><input className="mono" value={v.ifsc} onChange={(e) => setV((x) => ({ ...x, ifsc: e.target.value.toUpperCase().replace(/\s/g, '') }))} maxLength={11} /></Field>
+        </div>
+      </div>
+      {v.bank_note && <Field label="Old bank note"><input value={v.bank_note} onChange={set('bank_note')} /></Field>}
       <Field label="Notes"><input value={v.notes} onChange={set('notes')} /></Field>
       {canVerify && (
         <label className="check"><input type="checkbox" checked={v.verified} onChange={set('verified')} /> UPI ID verified (confirmed with the payee)</label>
@@ -103,7 +125,7 @@ export default function Payees() {
               <button key={p.id} className="row-item" onClick={() => setEdit(p)}>
                 <div className="ri-main">
                   <div className="ri-title">{p.name} {p.verified ? <span className="tick" title="UPI verified">✓</span> : p.upi_id ? <span className="chip amber tiny">unverified</span> : null}</div>
-                  <div className="ri-sub mono">{p.upi_id || p.bank_note || 'No UPI — cash/bank'}</div>
+                  <div className="ri-sub mono">{p.upi_id || (p.account_no ? `A/c ${p.account_no} · ${p.ifsc}` : p.bank_note) || 'No UPI — cash/bank'}</div>
                   <div className="ri-meta">{p.category && <span>{p.category}</span>}{p.phone && <span>☎ {p.phone}</span>}</div>
                 </div>
                 <div className="ri-side">
@@ -117,7 +139,7 @@ export default function Payees() {
       {edit && (
         <Sheet title={edit === 'new' ? 'New payee' : edit.name} onClose={() => setEdit(null)}>
           {edit !== 'new' && !canEdit
-            ? <p className="muted">Only approvers and admins can edit payees.</p>
+            ? <><BankDetails p={edit} /><p className="muted">Only approvers and admins can edit payees.</p></>
             : <PayeeForm initial={edit === 'new' ? null : edit} me={me} onSaved={() => setEdit(null)} />}
           {edit !== 'new' && has(me, 'admin') && (
             <button className="btn danger block" style={{ marginTop: 12 }} onClick={() => del(edit)}>Delete payee</button>

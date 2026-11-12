@@ -4,7 +4,7 @@ import { useData } from './App';
 import { supabase, rpc, BUCKET, notifyPayment, readReceipt } from './supabase';
 import ReceiptReadout from './ReceiptReadout';
 import { money, fmtDate, fmtDateTime, has, upiLink, waLink, appLink, uploadAttachment, effAmount } from './util';
-import { Sheet, Chip, Field, FilePicker, PendingFiles, Attachments } from './ui';
+import { Sheet, Chip, Field, FilePicker, PendingFiles, Attachments, BankDetails } from './ui';
 import ExpenseForm from './ExpenseForm';
 
 export default function ExpenseDetail({ id, onClose }) {
@@ -63,6 +63,7 @@ export default function ExpenseDetail({ id, onClose }) {
         <div><dt>Bill date</dt><dd>{fmtDate(e.expense_date)}</dd></div>
         <div><dt>Category</dt><dd>{e.category || '—'}</dd></div>
         <div><dt>Entered by</dt><dd>{userById[e.submitted_by]?.full_name}</dd></div>
+        {payee?.account_no && <div><dt>Payee bank</dt><dd className="mono">{payee.account_no} · {payee.ifsc}</dd></div>}
         {payee?.upi_id && <div><dt>Payee UPI</dt><dd className="mono">{payee.upi_id} {payee.verified ? <span className="tick">✓</span> : <span className="chip amber tiny">unverified</span>}</dd></div>}
         {e.approved_by && <div><dt>{e.status === 'rejected' ? 'Rejected by' : e.status === 'query' ? 'Query by' : 'Approved by'}</dt><dd>{userById[e.approved_by]?.full_name}</dd></div>}
         {e.payer_id && <div><dt>Payer</dt><dd>{userById[e.payer_id]?.full_name}</dd></div>}
@@ -264,7 +265,13 @@ function PayPanel({ e, payee }) {
           </div>
         </div>
       ) : (
-        <p className="note orange">This payee has no UPI ID. Pay by bank transfer or cash{payee?.bank_note ? <> — <span className="mono">{payee.bank_note}</span></> : ''}, then record it below.</p>
+        <p className="note orange">This payee has no UPI ID. Pay by bank transfer or cash{payee?.bank_note && !payee?.account_no ? <> — <span className="mono">{payee.bank_note}</span></> : ''}, then record it below.</p>
+      )}
+      {payee?.account_no && (
+        <>
+          <div className="divider">{link ? 'Or pay by bank transfer' : 'Bank details'}</div>
+          <BankDetails p={payee} />
+        </>
       )}
 
       <div className="divider">After paying, share the receipt here</div>
